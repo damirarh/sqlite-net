@@ -124,7 +124,19 @@ namespace SQLite
 		{
 			DatabasePath = databasePath;
 			Sqlite3DatabaseHandle handle;
-			var r = SQLite3.Open (DatabasePath, out handle, (int) openFlags, IntPtr.Zero);
+			
+			// in the case where the path may include Unicode
+			// force open to using UTF-8 using sqlite3_open_v2
+			byte[] databasePathAsBytes;
+			int databasePathLength;
+			
+			databasePathLength = System.Text.Encoding.UTF8.GetByteCount(DatabasePath);
+			databasePathAsBytes = new byte[databasePathLength + 1];
+			databasePathLength = System.Text.Encoding.UTF8.GetBytes(DatabasePath, 0, DatabasePath.Length, databasePathAsBytes, 0);
+			
+			// open using the byte[]
+			var r = SQLite3.Open (databasePathAsBytes, out handle, (int) openFlags, IntPtr.Zero);
+			
 			Handle = handle;
 			if (r != SQLite3.Result.OK) {
 				throw SQLiteException.New (r, String.Format ("Could not open database file: {0} ({1})", DatabasePath, r));
@@ -563,8 +575,7 @@ namespace SQLite
 		public T Get<T> (object pk) where T : new()
 		{
 			var map = GetMapping (typeof(T));
-			string query = string.Format ("select * from \"{0}\" where \"{1}\" = ?", map.TableName, map.PK.Name);
-			return Query<T> (query, pk).First ();
+			return Query<T> (map.GetByPrimaryKeySql, pk).First ();
 		}
 
         /// <summary>
@@ -598,8 +609,27 @@ namespace SQLite
 		public T Find<T> (object pk) where T : new ()
 		{
 			var map = GetMapping (typeof (T));
-			string query = string.Format ("select * from \"{0}\" where \"{1}\" = ?", map.TableName, map.PK.Name);
-			return Query<T> (query, pk).FirstOrDefault ();
+			return Query<T> (map.GetByPrimaryKeySql, pk).FirstOrDefault ();
+		}
+
+		/// <summary>
+		/// Attempts to retrieve an object with the given primary key from the table
+		/// associated with the specified type. Use of this method requires that
+		/// the given type have a designated PrimaryKey (using the PrimaryKeyAttribute).
+		/// </summary>
+		/// <param name="pk">
+		/// The primary key.
+		/// </param>
+		/// <param name="map">
+		/// The TableMapping used to identify the object type.
+		/// </param>
+		/// <returns>
+		/// The object with the given primary key or null
+		/// if the object is not found.
+		/// </returns>
+		public object Find (object pk, TableMapping map)
+		{
+			return Query (map, map.GetByPrimaryKeySql, pk).FirstOrDefault ();
 		}
 		
 		/// <summary>
@@ -956,6 +986,8 @@ namespace SQLite
 
 		public Column PK { get; private set; }
 
+		public string GetByPrimaryKeySql { get; private set; }
+
 		Column _autoPk = null;
 		Column[] _insertColumns = null;
 
@@ -992,6 +1024,14 @@ namespace SQLite
 			}
 			
 			HasAutoIncPK = _autoPk != null;
+
+			if (PK != null) {
+				GetByPrimaryKeySql = string.Format ("select * from \"{0}\" where \"{1}\" = ?", TableName, PK.Name);
+			}
+			else {
+				// People should not be calling Get/Find without a PK
+				GetByPrimaryKeySql = string.Format ("select * from \"{0}\" limit 1", TableName);
+			}
 		}
 
 		public bool HasAutoIncPK { get; private set; }
@@ -2017,10 +2057,16 @@ namespace SQLite
 
 #if !USE_CSHARP_SQLITE
 		[DllImport("sqlite3", EntryPoint = "sqlite3_open", CallingConvention=CallingConvention.Cdecl)]
-		public static extern Result Open (string filename, out IntPtr db);
+		public static extern Result Open ([MarshalAs(UnmanagedType.LPStr)] string filename, out IntPtr db);
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_open_v2", CallingConvention=CallingConvention.Cdecl)]
-		public static extern Result Open (string filename, out IntPtr db, int flags, IntPtr zvfs);
+		public static extern Result Open ([MarshalAs(UnmanagedType.LPStr)] string filename, out IntPtr db, int flags, IntPtr zvfs);
+		
+		[DllImport("sqlite3", EntryPoint = "sqlite3_open_v2", CallingConvention = CallingConvention.Cdecl)]
+		public static extern Result Open(byte[] filename, out IntPtr db, int flags, IntPtr zvfs);
+
+		[DllImport("sqlite3", EntryPoint = "sqlite3_open16", CallingConvention = CallingConvention.Cdecl)]
+		public static extern Result Open16([MarshalAs(UnmanagedType.LPWStr)] string filename, out IntPtr db);
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_close", CallingConvention=CallingConvention.Cdecl)]
 		public static extern Result Close (IntPtr db);
@@ -2035,7 +2081,7 @@ namespace SQLite
 		public static extern int Changes (IntPtr db);
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_prepare_v2", CallingConvention=CallingConvention.Cdecl)]
-		public static extern Result Prepare2 (IntPtr db, string sql, int numBytes, out IntPtr stmt, IntPtr pzTail);
+		public static extern Result Prepare2 (IntPtr db, [MarshalAs(UnmanagedType.LPStr)] string sql, int numBytes, out IntPtr stmt, IntPtr pzTail);
 
 		public static IntPtr Prepare2 (IntPtr db, string query)
 		{
@@ -2068,7 +2114,7 @@ namespace SQLite
 		}
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_bind_parameter_index", CallingConvention=CallingConvention.Cdecl)]
-		public static extern int BindParameterIndex (IntPtr stmt, string name);
+		public static extern int BindParameterIndex (IntPtr stmt, [MarshalAs(UnmanagedType.LPStr)] string name);
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_bind_null", CallingConvention=CallingConvention.Cdecl)]
 		public static extern int BindNull (IntPtr stmt, int index);
@@ -2083,7 +2129,7 @@ namespace SQLite
 		public static extern int BindDouble (IntPtr stmt, int index, double val);
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_bind_text16", CallingConvention=CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-		public static extern int BindText (IntPtr stmt, int index, string val, int n, IntPtr free);
+		public static extern int BindText (IntPtr stmt, int index, [MarshalAs(UnmanagedType.LPWStr)] string val, int n, IntPtr free);
 
 		[DllImport("sqlite3", EntryPoint = "sqlite3_bind_blob", CallingConvention=CallingConvention.Cdecl)]
 		public static extern int BindBlob (IntPtr stmt, int index, byte[] val, int n, IntPtr free);
