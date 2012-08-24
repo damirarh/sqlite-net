@@ -9,4 +9,5 @@ bin
 tests/test-results
 tests/TestResults/
 packages
+test-results
 TestResults
