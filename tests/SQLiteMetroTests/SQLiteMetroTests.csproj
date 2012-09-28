@@ -111,7 +111,13 @@
   </PropertyGroup>
   <ItemGroup>
     <!--A reference to the entire .Net Framework and Windows SDK are automatically included-->
+    <SDKReference Include="Microsoft.VCLibs, Version=11.0">
+      <Name>Microsoft Visual C++ Runtime Package</Name>
+    </SDKReference>
     <SDKReference Include="MSTestFramework, Version=11.0" />
+    <SDKReference Include="SQLite.WinRT, Version=3.7.14">
+      <Name>SQLite for Windows Runtime</Name>
+    </SDKReference>
     <SDKReference Include="TestPlatform, Version=11.0" />
   </ItemGroup>
   <ItemGroup>
@@ -186,9 +192,6 @@
     </AppxManifest>
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\..\lib\metro\sqlite3.dll">
-      <Link>sqlite3.dll</Link>
-    </Content>
     <Content Include="Images\UnitTestLogo.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
